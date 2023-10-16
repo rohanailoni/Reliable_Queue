@@ -1,0 +1,56 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+box "redis" #YELLOW
+    participant queue_main
+    participant temp_sortedSet
+    participant DynamoDB
+end box
+
+box AWS #LIGHTYELLOW
+    participant DynamoDB
+end box
+autonumber
+
+client -> queue_main:  polls for the event in the queue
+queue_main -> client:  returns the event if not empty and pops Event from the queue
+activate client #FFBBBB
+
+
+alt "This can be most failed on as fail in worker at this operation can result in complete loss of task"
+
+  client -> temp_sortedSet: create an sorted set hash with score as epoch and members as bytestream or string
+  note left
+    we are ignoring this event
+    as we are considering the user can
+    submit again but this contains very
+    less chance of failure.
+  end note
+
+end alt
+temp_sortedSet -> client : success or error
+
+
+client -> client: successfully processed the message.
+activate client #DarkGreen
+
+
+client -> temp_sortedSet : remove the hashed value of set
+deactivate client
+client -> DynamoDB :Process successful update the details of the Event.
+deactivate client
+
+client -> client : failed to Process the message
+activate client #DarkSalmon
+
+client -> client:wait till the client turns to worker mode
+activate client
+client -> temp_sortedSet : get Zrange from sorted range ascending by time epoch so that we can capture the first set in the queue
+temp_sortedSet -> client : return top 20 or so if possbile events
+
+client -> client : get the events that are greater than 20s
+client -> queue_main: puts all the events in the head i.e redis RPUSH.
+
+deactivate client
+
+deactivate client
+@enduml
